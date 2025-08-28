@@ -16,11 +16,13 @@ s3_client = boto3.client("s3")
 secrets_client = boto3.client("secretsmanager")
 
 def get_db_credentials(secret_arn):
+    """Recupera usuário e senha do Secrets Manager"""
     response = secrets_client.get_secret_value(SecretId=secret_arn)
     secret = json.loads(response["SecretString"])
     return secret["username"], secret["password"]
 
 def list_databases(db_user, db_password):
+    """Lista bancos de dados (exceto templates e rdsadmin)"""
     env = os.environ.copy()
     env["PGPASSWORD"] = db_password
 
@@ -36,7 +38,6 @@ def list_databases(db_user, db_password):
         FROM pg_database
         WHERE datistemplate = false
           AND datname NOT IN ('rdsadmin');  
-          -- Se quiser também excluir o 'postgres', use: AND datname NOT IN ('rdsadmin','postgres');
         """
     ]
 
@@ -46,47 +47,21 @@ def list_databases(db_user, db_password):
     
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
-def lambda_handler(event, context):
-    timestamp =  datetime.datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y%m%d%H%M%S")
-    db_user, db_password = get_db_credentials(SECRET_ARN)
+def backup_database(db, db_user, db_password, timestamp):
+    """Executa pg_dump de um banco e faz upload pro S3"""
+    filename = f"{db}_{timestamp}.dump"
+    filepath = f"/tmp/{filename}"
 
-    try:
-        databases = list_databases(db_user, db_password)
-    except Exception as e:
-        return {
-            "statusCode": 500,
-            "body": f"❌ Failed to list databases: {str(e)}"
-        }
+    dump_cmd = [
+        "pg_dump",
+        "-h", DB_HOST,
+        "-p", DB_PORT,
+        "-U", db_user,
+        "-d", db,
+        "-f", filepath
+    ]
 
-    results = []
+    env = os.environ.copy()
+    env["PGPASSWORD"] = db_password
 
-    for db in databases:
-        filename = f"{db}_{timestamp}.dump"
-        filepath = f"/tmp/{filename}"
-
-        dump_cmd = [
-            "pg_dump",
-            "-h", DB_HOST,
-            "-p", DB_PORT,
-            "-U", db_user,
-            "-d", db,
-            "-f", filepath
-        ]
-
-        env = os.environ.copy()
-        env["PGPASSWORD"] = db_password
-
-        try:
-            subprocess.check_call(dump_cmd, env=env)
-            s3_key = f"{S3_PREFIX}{filename}"
-            s3_client.upload_file(filepath, S3_BUCKET, s3_key)
-            results.append(f"✅ {db} → s3://{S3_BUCKET}/{s3_key}")
-        except subprocess.CalledProcessError as e:
-            results.append(f"❌ {db} pg_dump failed: {e}")
-        except Exception as e:
-            results.append(f"❌ {db} error: {str(e)}")
-
-    return {
-        "statusCode": 200,
-        "body": results
-    }
+    subprocess.check_call(dump_cmd, env=env)
