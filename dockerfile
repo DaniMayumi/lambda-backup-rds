@@ -8,7 +8,7 @@ RUN yum install -y \
     && yum clean all
 
 # Copy your Lambda function code
-COPY app.py ${LAMBDA_TASK_ROOT}
+COPY lambda_function.py ${LAMBDA_TASK_ROOT}
 
 # Inform Lambda wich function is the entrypoint
 CMD ["lambda_function.lambda_handler"]
