@@ -10,5 +10,5 @@ RUN yum install -y \
 # Copy your Lambda function code
 COPY app.py ${LAMBDA_TASK_ROOT}
 
-# Set the CMD to your handler
-CMD ["app.lambda_handler"]
+# Inform Lambda wich function is the entrypoint
+CMD ["lambda_function.lambda_handler"]
